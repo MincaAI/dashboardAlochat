@@ -11,7 +11,7 @@ from collections import defaultdict
 
 # Set page config for wider sidebar - MUST be first Streamlit command
 st.set_page_config(
-    page_title="Whatsapp AI bot interaction",
+    page_title="Whatsapp AI bot interaction before May",
     page_icon="💬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -56,7 +56,7 @@ def format_timestamp(timestamp_str):
 
 def calculate_metrics(query_result):
     # Initialize counters
-    total_messages = len(query_result.matches)
+    total_messages = len(query_result)
     user_rooms = defaultdict(set)  # user -> set of rooms
     user_messages = defaultdict(int)  # user -> total number of messages
     user_message_count = 0
@@ -69,8 +69,8 @@ def calculate_metrics(query_result):
     other_single_messages = []  # List of other single messages
     
     # Process all messages
-    for match in query_result.matches:
-        if match.metadata:
+    for match in query_result:
+        if match.metadata and not match.metadata.get("timestamp"):  # Only process messages without timestamp
             user_name = match.metadata.get("user_name")
             room_id = match.metadata.get("room_id")
             sender_type = match.metadata.get("sender_type", "user")
@@ -91,7 +91,7 @@ def calculate_metrics(query_result):
         if count == 1:
             single_message_users += 1
             # Find the single message for this user
-            for match in query_result.matches:
+            for match in query_result:
                 if (match.metadata and 
                     match.metadata.get("user_name") == user and 
                     match.metadata.get("sender_type") == "user"):
@@ -163,6 +163,7 @@ try:
         query_result = index.query(
             vector=[0.0]*1536,
             namespace="messages",
+            filter={"timestamp": {"$exists": False}},  # Only get messages without timestamp
             top_k=1000,
             include_metadata=True
         )
@@ -170,8 +171,14 @@ try:
         progress_bar.progress(50)
         status_text.text("Processing user list...")
         
-        # Calculate metrics
-        metrics = calculate_metrics(query_result)
+        # Ensure query_result is handled correctly
+        if isinstance(query_result, list):
+            messages = query_result
+        else:
+            messages = query_result.matches
+
+        # Calculate metrics directly from messages (no need to filter again)
+        metrics = calculate_metrics(messages)
         
         # Display metrics in sidebar
         with st.sidebar:
@@ -248,9 +255,9 @@ try:
             with col2:
                 st.metric("Agent Messages", metrics["agent_messages"])
         
-        # Extract unique user names
+        # Extract unique user names from messages without timestamps
         user_names = set()
-        for match in query_result.matches:
+        for match in messages:
             if match.metadata and "user_name" in match.metadata:
                 user_names.add(match.metadata["user_name"])
         
@@ -278,7 +285,12 @@ try:
                         query_result = index.query(
                             vector=[0.0]*1536,
                             namespace="messages",
-                            filter={"user_name": {"$eq": selected_user}},
+                            filter={
+                                "$and": [
+                                    {"user_name": {"$eq": selected_user}},
+                                    {"timestamp": {"$exists": False}}  # Only get messages without timestamp
+                                ]
+                            },
                             top_k=1000,
                             include_metadata=True
                         )
